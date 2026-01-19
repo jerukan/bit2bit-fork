@@ -1,0 +1,21 @@
+PATH:
+  model_directory: ../models
+  ground_truth_file: ""
+  data_directories:
+    - 20240327_105516_test_2_5000x64x64x64_skip=3_l=10_d=5_sf=24_ds=2at10_f=10.0_z=6_g=0_m=True_b=tri_a=relu_b=50_e=100_p=32
+    - 20240327_101448_test_1_1000x128x128x128_skip=3_l=10_d=5_sf=24_ds=2at10_f=10.0_z=6_g=0_m=True_b=tri_a=relu_b=5_e=100_p=32
+  input_name: input.tif
+  inference_name: inference.tif
+  model_name: final_model.ckpt
+  output_path: ../metric_output
+
+CONFIG:
+  metric_list:
+    - mse
+    - ssim
+    - psnr
+    - ncc
+    - niqe
+    - niqe_ref
+  number_of_frames: 512
+  skip_frames: 8

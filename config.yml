@@ -1,0 +1,76 @@
+--- # Version 0.4.0 + skip_depth
+RAW:
+  num_workers: 12
+  image_size: 512
+  supported_formats: [".png", ".bin", ".npy"]
+
+PATH:
+  logger: "logs"
+  data_type: "raw" # "raw" | "processed"
+  dir_path: "data/guitar.bin" # for raw data
+  num_of_files: 100
+  data_dir: "data/guitar.bin" # for processed data
+  ground_truth_path: ""
+  ground_truth_file: "ref.tif"
+  data_path: ""
+  data_file: "RES_4341_p=0.06250_m=0.05898.tif"
+  model_path: "models"
+  thin: 0.03125
+
+DATA:
+  xy_size: 256
+  z_size: 32
+  min_psnr: 0 # set to "auto" for automatic detection PSNR, use 0-1 for signal sampling
+  max_psnr: 0.999999 # set to "auto" for automatic detection PSNR, use 0-1 for signal sampling
+  virtual_size: 1000 # set to 0 for full dataset
+  augments: False # may cause artifacts for normal image
+  rotation: 0 # may cause artifacts
+  psnr_sampling: "signal" # "db" | "signal" | "fixed"
+  random_crop: True
+  skip_frames: 0 # skip every n-th frame
+  max_probability: 0.999999
+  note: "0-0.999999"
+
+MODEL:
+  channels: 1
+  depth: 5
+  start_filts: 32
+  depth_scale: 2
+  depth_scale_stop: 10
+  z_conv_stage: 3
+  skip_depth: 0
+  group_norm: 8
+  dropout_p: 0.0
+  scale_factor: 10.0
+  sin_encoding: false
+  signal_levels: 10
+  masked: True
+  down_checkpointing: true
+  up_checkpointing: false
+  loss_function: "photon" # "photon" | "l1" | "mse"
+  up_mode: "pixelshuffle" # "transpose" | "pixelshuffle" | "nearest" | "bilinear" | "trilinear"
+  merge_mode: "concat" # "concat" | "add"
+  down_mode: "maxpool" # "maxpool" | "conv" | "unshuffle"
+  activation: "gelu" # "relu" | "leakyrelu" | "gelu" | "silu"
+  block_type: "tri" # "tri" | "dual"
+  note: ""
+  optimizer_config:
+    name: "adamw" # "adam" | "sgd" | "adamw"
+    lr: 0.00032
+    mode: "min" # "min" | "max"
+    factor: 0.5
+    patience: 20
+
+TRAINING:
+  batch_size: 4
+  epochs: 150
+  shuffle: true
+  drop_last: true
+  pin_memory: true
+  num_workers: 24
+  device_number: 0
+  precision: "32"
+  matmul_precision: "high"
+  note: ""
+
+  # Version 0.3.1 + rotation + unshuffle
