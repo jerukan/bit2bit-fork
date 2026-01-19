@@ -1,6 +1,9 @@
 data/**
+!data/.gitkeep
 results/**
+!results/.gitkeep
 models/**
+!models/.gitkeep
 logs/**
 *.gif
 *.avi
