@@ -6,13 +6,11 @@ RAW:
 
 PATH:
   logger: "logs"
-  data_type: "raw" # "raw" | "processed"
-  dir_path: "data/guitar.bin" # for raw data
+  data_type: "zarr" # "raw" | "processed" | "zarr"
+  data_path: "/scratch/jeyan/photon-testing-grounds/data/quanta/balloon_gun3.zarr" # for raw data
   num_of_files: 100
-  data_dir: "data/guitar.bin" # for processed data
   ground_truth_path: ""
   ground_truth_file: "ref.tif"
-  data_path: ""
   data_file: "RES_4341_p=0.06250_m=0.05898.tif"
   model_path: "models"
   thin: 0.03125
@@ -68,7 +66,7 @@ TRAINING:
   drop_last: true
   pin_memory: true
   num_workers: 24
-  device_number: 0
+  device_number: 1
   precision: "32"
   matmul_precision: "high"
   note: ""

@@ -38,24 +38,70 @@ import numpy as np
 import logging
 import sys
 import shutil
+import dask.array as da
+import zarr
 
-def thin_frames_uniform(frames, keep_prob, seed=None):
-    rng = np.random.default_rng(seed=seed)
-    frames = frames.copy()
-    nframes = frames.shape[0]
-    # chunk over time to avoid constructing huge intermediate arrays
-    chunk_size = 1000
-    for t0 in tqdm(list(range(0, nframes, chunk_size)), desc="Thinning full frame chunks over time"):
-        t1 = min(t0 + chunk_size, nframes)
-        sub = frames[t0:t1]  # view into wholetotalbit
-        eventswhere = np.nonzero(sub)
-        nevents = eventswhere[0].shape[0]
-        if nevents == 0:
-            continue
-        # mask of events to delete
-        mask = rng.random(nevents) > keep_prob
-        sub[eventswhere[0][mask], eventswhere[1][mask], eventswhere[2][mask]] = 0
-    return frames
+def read_quanta_zarr(path, load_data=True):
+    """
+    Reads quanta data from a Zarr file and returns points and quantaframes.
+
+    Args:
+        path (str or Path): Path to the Zarr file.
+        load_data (bool): if True, loads all arrays into memory.
+
+    Returns:
+        tuple:
+            - quantaframes: array of shape (T, H, W) with binary frames. If
+                load_data is False, the array will be lazy-loaded.
+            - (t, y, x) (np.ndarray): tuple of 1D arrays for t, y, and x coordinates.
+            - attrs (dict): relevant metadata (fps and T_exp).
+    """
+    zarrdata = zarr.open_group(path, mode="r")
+    framekey = "frames" if "frames" in zarrdata else "quantaframes"
+    contains_coords = all(k in zarrdata for k in ("t", "y", "x"))
+    quantaframes = zarrdata[framekey]
+    if contains_coords:
+        t = zarrdata["t"]
+        y = zarrdata["y"]
+        x = zarrdata["x"]
+    else:
+        t = y = x = None
+    if load_data:
+        quantaframes = quantaframes[:]
+        if contains_coords:
+            t = t[:]
+            y = y[:]
+            x = x[:]
+    return quantaframes, (t, y, x), zarrdata.attrs
+
+def prob_from_dcr(dcr_rate_hz, fps):
+    """
+    Convert a dark count rate in Hz to a per-frame probability of a dark count photon.
+    """
+    return 1 - np.exp(-dcr_rate_hz / fps)
+
+def thin_frames_uniform(frames, keep_prob, dcr_prob=None, seed=None):
+    """
+    Thin binary frames uniformly with probability keep_prob. Also adds dark
+    count photons to lower the SNR.
+
+    This is an expensive operation on SPAD data, so dask is used for
+    multiprocessing.
+
+    Args:
+        dcr_prob: dark count photon probability (not the rate itself)
+    """
+    T, H, W = frames.shape
+    # convert to a dask array with automatic chunking and apply a lazy random mask
+    frames = da.from_array(frames, chunks=(400, H, W))
+    rs = da.random.RandomState(seed)
+    mask = rs.random_sample(frames.shape, chunks=frames.chunks) < keep_prob
+    if dcr_prob is not None:
+        dcr_photons = rs.binomial(1, dcr_prob, size=frames.shape, chunks=frames.chunks).astype("uint8")
+    else:
+        dcr_photons = da.zeros(frames.shape, chunks=frames.chunks, dtype="uint8")
+    frames = (frames.astype("uint8") & mask.astype("uint8")) | dcr_photons
+    return frames.compute()
 
 configure_path = Path("./config.yml")
 config = load_config(path=configure_path)  # CLI argument
@@ -68,48 +114,37 @@ config = load_config(path=configure_path)  # CLI argument
 # )
 
 data_type = config["PATH"]["data_type"]
-if data_type not in ["raw", "processed"]:
-    raise ValueError("Data type must be RAW or CLEAN")
+if data_type not in ["raw", "processed", "zarr"]:
+    raise ValueError("Data type must be RAW or CLEAN or ZARR")
 
-dir_path = Path(config["PATH"]["dir_path"])
+data_path = Path(config["PATH"]["data_path"])
 num_of_files = config["PATH"]["num_of_files"]
-data_dir = Path(config["PATH"]["data_dir"])
-data_path = config["PATH"]["data_path"]
 data_file = config["PATH"]["data_file"]
-ground_truth_path = config["PATH"]["ground_truth_path"]
-ground_truth_file = config["PATH"]["ground_truth_file"]
 model_path = Path(config["PATH"]["model_path"])
 
-data_path = data_dir / data_file if data_path == "" else Path(data_path)
-ground_truth_path = (
-    data_dir / ground_truth_file if ground_truth_path == "" else Path(ground_truth_path)
-)
 if data_type == "raw":
     try:
-        if dir_path.is_dir():
-            input_folder = SPADFolder(dir_path)
+        if data_path.is_dir():
+            input_folder = SPADFolder(data_path)
             input = input_folder.spadstack[:num_of_files]
             data = input.process(clean_hotpixels)
         else:
-            input_folder = SPADData(dir_path)
+            input_folder = SPADData(data_path)
             input = input_folder.data
             data = clean_hotpixels(input)
     except FileNotFoundError:
         logging.error("Folder not found")
         # sys.exit(1)
     del input
-elif data_type == "processed":
-    try:
-        data = imread(data_path)
-        ground_truth_file = imread(ground_truth_path)
-    except FileNotFoundError:
-        logging.error("File not found")
-        # sys.exit(1)
+elif data_type == "zarr":
+    data, _, _ = read_quanta_zarr(data_path)
 
-data = data[:40000]
+FRAME_LIMIT = 40000
+data = data[:FRAME_LIMIT]
 keep_prob = config["PATH"]["thin"]
 if keep_prob < 1.0:
-    data = thin_frames_uniform(data, keep_prob=keep_prob, seed=42)
+    dcr_prob = prob_from_dcr(dcr_rate_hz=25, fps=100000)
+    data = thin_frames_uniform(data, keep_prob=keep_prob, dcr_prob=dcr_prob, seed=42)
 idx_train = int(data.shape[0] * 0.8)
 traindata = data[:idx_train]
 valdata = data[idx_train:]
@@ -137,7 +172,8 @@ train_loader = dt.DataLoader(train_data, **loader_config)
 loader_config["shuffle"] = False
 val_loader = dt.DataLoader(val_data, **loader_config)
 
-test_name = train_config.name
+# test_name = train_config.name
+test_name = f"{data_path.stem}-thin{keep_prob:.3f}"
 default_root_dir = model_path / test_name
 if not default_root_dir.exists():
     default_root_dir.mkdir(parents=True)
@@ -152,7 +188,7 @@ trainer = pl.Trainer(
     accelerator="gpu",
     gradient_clip_val=1,
     precision=train_config.precision,  # type: ignore
-    devices=[0, 1, 2, 3, 4, 5, 6, 7],
+    devices=[1, 2, 3, 4, 5, 6, 7],
     strategy="ddp_find_unused_parameters_true",
     max_epochs=train_config.epochs,
     callbacks=[
@@ -163,7 +199,7 @@ trainer = pl.Trainer(
             save_top_k=2,
         ),
         LearningRateMonitor("epoch"),
-        # EarlyStopping("val_loss", patience=25),
+        EarlyStopping("val_loss", patience=25),
         # DeviceStatsMonitor(),
     ],
     logger=logger,  # type: ignore
