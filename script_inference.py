@@ -235,7 +235,7 @@ if keep_prob < 1.0:
     dcr_prob = prob_from_dcr(dcr_rate_hz=25, fps=100000)
     data = thin_frames_uniform(data, keep_prob=keep_prob, dcr_prob=dcr_prob, seed=42)
 
-dataset = "guitar-0.03125"
+dataset = f"{data_path.stem}-thin{keep_prob:.3f}"
 model = SPADGAP.load_from_checkpoint(f"models/{dataset}/final_model.ckpt")
 indata = data[:10000].astype(np.float32)
 output = gpu_patch_inference(
