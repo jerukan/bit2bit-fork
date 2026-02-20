@@ -106,6 +106,9 @@ def thin_frames_uniform(frames, keep_prob, dcr_prob=None, seed=None):
 configure_path = Path("./config.yml")
 config = load_config(path=configure_path)  # CLI argument
 
+datanames = ["Monkey", "cpufan_restarget", "Resolution_target_drill", "ultrasound_bubble24", "plasma_ball_5_med"]
+keep_probs = [1.0, 1/32]
+
 # logging.basicConfig(
 #     # filename=config["PATH"]["logger"],
 #     level=logging.DEBUG,
@@ -113,106 +116,114 @@ config = load_config(path=configure_path)  # CLI argument
 #     stream=sys.stdout,
 # )
 
-data_type = config["PATH"]["data_type"]
-if data_type not in ["raw", "processed", "zarr"]:
-    raise ValueError("Data type must be RAW or CLEAN or ZARR")
+for dataname in datanames:
+    data_type = config["PATH"]["data_type"]
+    if data_type not in ["raw", "processed", "zarr"]:
+        raise ValueError("Data type must be RAW or CLEAN or ZARR")
 
-data_path = Path(config["PATH"]["data_path"])
-num_of_files = config["PATH"]["num_of_files"]
-data_file = config["PATH"]["data_file"]
-model_path = Path(config["PATH"]["model_path"])
+    # data_path = Path(config["PATH"]["data_path"])
+    data_path = Path("/scratch/jeyan/photon-testing-grounds/data/quanta") / f"{dataname}.zarr"
+    num_of_files = config["PATH"]["num_of_files"]
+    data_file = config["PATH"]["data_file"]
+    model_path = Path(config["PATH"]["model_path"])
 
-if data_type == "raw":
-    try:
-        if data_path.is_dir():
-            input_folder = SPADFolder(data_path)
-            input = input_folder.spadstack[:num_of_files]
-            data = input.process(clean_hotpixels)
+    if data_type == "raw":
+        try:
+            if data_path.is_dir():
+                input_folder = SPADFolder(data_path)
+                input = input_folder.spadstack[:num_of_files]
+                data_orig = input.process(clean_hotpixels)
+            else:
+                input_folder = SPADData(data_path)
+                input = input_folder.data
+                data_orig = clean_hotpixels(input)
+        except FileNotFoundError:
+            logging.error("Folder not found")
+            # sys.exit(1)
+        del input
+    elif data_type == "zarr":
+        data_orig, _, _ = read_quanta_zarr(data_path)
+
+    FRAME_LIMIT = 40000
+    data_orig = data_orig[:FRAME_LIMIT]
+    for keep_prob in keep_probs:
+        # keep_prob = config["PATH"]["thin"]
+        if keep_prob < 1.0:
+            dcr_prob = prob_from_dcr(dcr_rate_hz=25, fps=100000)
+            data = thin_frames_uniform(data_orig, keep_prob=keep_prob, dcr_prob=dcr_prob, seed=42)
         else:
-            input_folder = SPADData(data_path)
-            input = input_folder.data
-            data = clean_hotpixels(input)
-    except FileNotFoundError:
-        logging.error("Folder not found")
-        # sys.exit(1)
-    del input
-elif data_type == "zarr":
-    data, _, _ = read_quanta_zarr(data_path)
+            data = data_orig
+        idx_train = int(data.shape[0] * 0.8)
+        traindata = data[:idx_train]
+        valdata = data[idx_train:]
+        data_config = TrainData.from_config(config["DATA"], traindata.astype("float32"))
+        model_config = ModelConfig.from_config(config["MODEL"])
+        train_config = TrainConfig.from_config(config["TRAINING"], data_config, model_config)
+        val_data_config = TrainData.from_config_validation(
+            config["DATA"], (valdata.astype(np.float32))
+        )
+        print(train_config.metadata())
 
-FRAME_LIMIT = 40000
-data = data[:FRAME_LIMIT]
-keep_prob = config["PATH"]["thin"]
-if keep_prob < 1.0:
-    dcr_prob = prob_from_dcr(dcr_rate_hz=25, fps=100000)
-    data = thin_frames_uniform(data, keep_prob=keep_prob, dcr_prob=dcr_prob, seed=42)
-idx_train = int(data.shape[0] * 0.8)
-traindata = data[:idx_train]
-valdata = data[idx_train:]
-data_config = TrainData.from_config(config["DATA"], traindata.astype("float32"))
-model_config = ModelConfig.from_config(config["MODEL"])
-train_config = TrainConfig.from_config(config["TRAINING"], data_config, model_config)
-val_data_config = TrainData.from_config_validation(
-    config["DATA"], (valdata.astype(np.float32))
-)
-print(train_config.metadata())
+        train_data = BernoulliDataset3D.from_dataclass(data_config)
+        val_data = ValidationDataset3D.from_dataclass(val_data_config)
 
-train_data = BernoulliDataset3D.from_dataclass(data_config)
-val_data = ValidationDataset3D.from_dataclass(val_data_config)
+        loader_config = {
+            "batch_size": train_config.batch_size,
+            "shuffle": train_config.shuffle,
+            "pin_memory": train_config.pin_memory,
+            "drop_last": train_config.drop_last,
+            "num_workers": train_config.num_workers,
+            "persistent_workers": True,
+        }
 
-loader_config = {
-    "batch_size": train_config.batch_size,
-    "shuffle": train_config.shuffle,
-    "pin_memory": train_config.pin_memory,
-    "drop_last": train_config.drop_last,
-    "num_workers": train_config.num_workers,
-    "persistent_workers": True,
-}
+        train_loader = dt.DataLoader(train_data, **loader_config)
+        loader_config["shuffle"] = False
+        val_loader = dt.DataLoader(val_data, **loader_config)
 
-train_loader = dt.DataLoader(train_data, **loader_config)
-loader_config["shuffle"] = False
-val_loader = dt.DataLoader(val_data, **loader_config)
+        # test_name = train_config.name
+        test_name = f"{data_path.stem}-thin{keep_prob:.3f}"
+        default_root_dir = model_path / test_name
+        if not default_root_dir.exists():
+            default_root_dir.mkdir(parents=True)
 
-# test_name = train_config.name
-test_name = f"{data_path.stem}-thin{keep_prob:.3f}"
-default_root_dir = model_path / test_name
-if not default_root_dir.exists():
-    default_root_dir.mkdir(parents=True)
+        model = SPADGAP.from_dataclass(model_config)
+        model.train()
 
-model = SPADGAP.from_dataclass(model_config)
-model.train()
+        logger = TensorBoardLogger(save_dir=model_path, name=test_name)
 
-logger = TensorBoardLogger(save_dir=model_path, name=test_name)
+        trainer = pl.Trainer(
+            default_root_dir=default_root_dir,
+            accelerator="gpu",
+            gradient_clip_val=1,
+            precision=train_config.precision,  # type: ignore
+            devices=[1, 2, 3, 4, 5, 6, 7],
+            strategy="ddp_find_unused_parameters_true",
+            max_epochs=train_config.epochs,
+            callbacks=[
+                ModelCheckpoint(
+                    save_weights_only=True,
+                    mode="min",
+                    monitor="val_loss",
+                    save_top_k=2,
+                ),
+                LearningRateMonitor("epoch"),
+                EarlyStopping("val_loss", patience=25),
+                # DeviceStatsMonitor(),
+            ],
+            logger=logger,  # type: ignore
+            profiler="simple",
+            limit_val_batches=20,
+            enable_model_summary=True,
+            enable_checkpointing=True,
+        )
+        # print(f"input_size: {tuple(next(iter(train_loader))[0].shape)}")
+        print(f"file: {test_name}")
 
-trainer = pl.Trainer(
-    default_root_dir=default_root_dir,
-    accelerator="gpu",
-    gradient_clip_val=1,
-    precision=train_config.precision,  # type: ignore
-    devices=[1, 2, 3, 4, 5, 6, 7],
-    strategy="ddp_find_unused_parameters_true",
-    max_epochs=train_config.epochs,
-    callbacks=[
-        ModelCheckpoint(
-            save_weights_only=True,
-            mode="min",
-            monitor="val_loss",
-            save_top_k=2,
-        ),
-        LearningRateMonitor("epoch"),
-        EarlyStopping("val_loss", patience=25),
-        # DeviceStatsMonitor(),
-    ],
-    logger=logger,  # type: ignore
-    profiler="simple",
-    limit_val_batches=20,
-    enable_model_summary=True,
-    enable_checkpointing=True,
-)
-# print(f"input_size: {tuple(next(iter(train_loader))[0].shape)}")
-print(f"file: {test_name}")
+        model.train()
+        train_config.to_yaml(default_root_dir / "metadata.yml")
+        shutil.copyfile(configure_path, default_root_dir / "config.yml")
+        trainer.fit(model, train_loader, val_loader)
+        trainer.save_checkpoint(default_root_dir / "final_model.ckpt")
 
-model.train()
-train_config.to_yaml(default_root_dir / "metadata.yml")
-shutil.copyfile(configure_path, default_root_dir / "config.yml")
-trainer.fit(model, train_loader, val_loader)
-trainer.save_checkpoint(default_root_dir / "final_model.ckpt")
+        del trainer
+        del model

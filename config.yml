@@ -7,13 +7,13 @@ RAW:
 PATH:
   logger: "logs"
   data_type: "zarr" # "raw" | "processed" | "zarr"
-  data_path: "/scratch/jeyan/photon-testing-grounds/data/quanta/balloon_gun3.zarr" # for raw data
+  data_path: "/scratch/jeyan/photon-testing-grounds/data/quanta/cpufan_restarget.zarr" # for raw data
   num_of_files: 100
   ground_truth_path: ""
   ground_truth_file: "ref.tif"
   data_file: "RES_4341_p=0.06250_m=0.05898.tif"
   model_path: "models"
-  thin: 0.125
+  thin: 0.03125
 
 DATA:
   xy_size: 256
