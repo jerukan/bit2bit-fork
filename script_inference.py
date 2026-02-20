@@ -225,10 +225,11 @@ def thin_frames_uniform(frames, keep_prob, dcr_prob=None, seed=None):
 configure_path = Path("./config.yml")
 config = load_config(path=configure_path)  # CLI argument
 
-datanames = ["Monkey", "cpufan_restarget", "Resolution_target_drill", "ultrasound_bubble24", "plasma_ball_5_med"]
-keep_probs = [1.0, 1/32]
+datanames = ["balloon1"]
+slices_interest = [slice(36000, 76000)]
+keep_probs = [1/32]
 
-for dataname in datanames:
+for i, dataname in enumerate(datanames):
     data_type = config["PATH"]["data_type"]
     if data_type not in ["raw", "processed", "zarr"]:
         raise ValueError("Data type must be RAW or CLEAN or ZARR")
@@ -256,8 +257,9 @@ for dataname in datanames:
     elif data_type == "zarr":
         data_orig, _, _ = read_quanta_zarr(data_path)
     FRAME_LIMIT = 40000
-    data_orig = data_orig[:FRAME_LIMIT]
-
+    slice_interest = slices_interest[i]
+    data_orig = data_orig[slice_interest]
+    # data_orig = data_orig[:FRAME_LIMIT]
     for keep_prob in keep_probs:
         # keep_prob = config["PATH"]["thin"]
         if keep_prob < 1.0:
