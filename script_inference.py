@@ -46,6 +46,7 @@ from itertools import product
 from inference import gpu_patch_inference
 
 from matplotlib import cm
+import matplotlib.pyplot as plt
 import cv2
 from tqdm.auto import tqdm
 def get_codec_for_format(format: str):
@@ -61,7 +62,11 @@ def get_codec_for_format(format: str):
         return "avc1"
     else:
         raise ValueError(f"I haven't added the codec for: {format}")
-def to_video(frames: np.ndarray, path, res_scale=1.0, playback_fps=None, cmap=None, format=None, maxv=None):
+
+def to_video(
+    frames: np.ndarray, path, res_scale=1.0, playback_fps=None, gamma=1.0, cmap=None, format=None,
+    vmin=None, vmax=None, use_quantile=False
+):
     """
     Saves video frame arrays to a video file or sequence of PNGs. If path has no extension, 
     it is treated as a directory and individual image files are saved.
@@ -73,11 +78,13 @@ def to_video(frames: np.ndarray, path, res_scale=1.0, playback_fps=None, cmap=No
         cmap: ignored if frames are RGB; otherwise, matplotlib colormap name or object.
         format (str or None): video format (e.g., "mp4", "avi"), or image format (e.g., "png");
             if None, inferred from path suffix.
+        use_quantile (bool): if True, use quantiles to determine vmin and vmax for normalization
+            (ignored if vmin or vmax are specified).
     """
     path = Path(path)
     if cmap is None:
         cmap = "viridis"
-    cmap_fn = cm.get_cmap(cmap)
+    cmap_fn = plt.get_cmap(cmap)
     is_rgb = False
     if frames.ndim == 4:
         if frames.shape[3] == 3:
@@ -90,10 +97,16 @@ def to_video(frames: np.ndarray, path, res_scale=1.0, playback_fps=None, cmap=No
         raise ValueError("frames must be a 3D or 4D numpy array")
 
     # compute a normalized intensity in [0,1] for colormap input
-    if maxv is None:
-        maxv = float(np.max(frames))
-        if maxv == 0.0:
-            maxv = 1.0
+    if vmax is None:
+        if use_quantile:
+            vmax = float(np.quantile(frames, 0.99))
+        else:
+            vmax = float(np.max(frames))
+    if vmin is None:
+        if use_quantile:
+            vmin = float(np.quantile(frames, 0.01))
+        else:
+            vmin = float(np.min(frames))
 
     H, W = frames.shape[1], frames.shape[2]
     if res_scale != 1.0:
@@ -111,6 +124,7 @@ def to_video(frames: np.ndarray, path, res_scale=1.0, playback_fps=None, cmap=No
     else:
         if playback_fps is None:
             raise ValueError("playback_fps must be specified if saving a video file")
+        path.parent.mkdir(parents=True, exist_ok=True)
         if format is None:
             format = path.suffix[1:].lower()
         codec = get_codec_for_format(format)
@@ -119,8 +133,12 @@ def to_video(frames: np.ndarray, path, res_scale=1.0, playback_fps=None, cmap=No
 
     max_frames = len(frames)
 
+    if not is_video_file:
+        allpaths = []
     for i in tqdm(range(max_frames), desc="Writing video frames"):
-        intensity = np.clip(frames[i], 0, maxv) / maxv  # normalize to [0,1]
+        intensity = (np.clip(frames[i], vmin, vmax) - vmin) / (vmax - vmin)  # normalize to [0,1]
+        if gamma != 1:
+            intensity = intensity ** gamma
         if is_rgb:
             rgb_mapped = (intensity * 255.0).astype(np.uint8)  # (H,W,3) in RGB
         else:
@@ -135,8 +153,12 @@ def to_video(frames: np.ndarray, path, res_scale=1.0, playback_fps=None, cmap=No
         else:
             frame_path = path / f"frame_{i:05d}.{format}"
             cv2.imwrite(str(frame_path), bgr_mapped)
+            allpaths.append(frame_path)
     if is_video_file:
         vidwriter.release()
+    if not is_video_file:
+        return allpaths
+    return path
 
 def read_quanta_zarr(path, load_data=True):
     """
@@ -203,57 +225,65 @@ def thin_frames_uniform(frames, keep_prob, dcr_prob=None, seed=None):
 configure_path = Path("./config.yml")
 config = load_config(path=configure_path)  # CLI argument
 
-data_type = config["PATH"]["data_type"]
-if data_type not in ["raw", "processed", "zarr"]:
-    raise ValueError("Data type must be RAW or CLEAN or ZARR")
+datanames = ["Monkey", "cpufan_restarget", "Resolution_target_drill", "ultrasound_bubble24", "plasma_ball_5_med"]
+keep_probs = [1.0, 1/32]
 
-data_path = Path(config["PATH"]["data_path"])
-num_of_files = config["PATH"]["num_of_files"]
-data_file = config["PATH"]["data_file"]
-model_path = Path(config["PATH"]["model_path"])
+for dataname in datanames:
+    data_type = config["PATH"]["data_type"]
+    if data_type not in ["raw", "processed", "zarr"]:
+        raise ValueError("Data type must be RAW or CLEAN or ZARR")
 
-if data_type == "raw":
-    try:
-        if data_path.is_dir():
-            input_folder = SPADFolder(data_path)
-            input = input_folder.spadstack[:num_of_files]
-            data = input.process(clean_hotpixels)
+    # data_path = Path(config["PATH"]["data_path"])
+    data_path = Path("/scratch/jeyan/photon-testing-grounds/data/quanta") / f"{dataname}.zarr"
+    num_of_files = config["PATH"]["num_of_files"]
+    data_file = config["PATH"]["data_file"]
+    model_path = Path(config["PATH"]["model_path"])
+
+    if data_type == "raw":
+        try:
+            if data_path.is_dir():
+                input_folder = SPADFolder(data_path)
+                input = input_folder.spadstack[:num_of_files]
+                data_orig = input.process(clean_hotpixels)
+            else:
+                input_folder = SPADData(data_path)
+                input = input_folder.data
+                data_orig = clean_hotpixels(input)
+        except FileNotFoundError:
+            logging.error("Folder not found")
+            # sys.exit(1)
+        del input
+    elif data_type == "zarr":
+        data_orig, _, _ = read_quanta_zarr(data_path)
+    FRAME_LIMIT = 40000
+    data_orig = data_orig[:FRAME_LIMIT]
+
+    for keep_prob in keep_probs:
+        # keep_prob = config["PATH"]["thin"]
+        if keep_prob < 1.0:
+            dcr_prob = prob_from_dcr(dcr_rate_hz=25, fps=100000)
+            data = thin_frames_uniform(data_orig, keep_prob=keep_prob, dcr_prob=dcr_prob, seed=42)
         else:
-            input_folder = SPADData(data_path)
-            input = input_folder.data
-            data = clean_hotpixels(input)
-    except FileNotFoundError:
-        logging.error("Folder not found")
-        # sys.exit(1)
-    del input
-elif data_type == "zarr":
-    data, _, _ = read_quanta_zarr(data_path)
-FRAME_LIMIT = 40000
-data = data[:FRAME_LIMIT]
-keep_prob = config["PATH"]["thin"]
-if keep_prob < 1.0:
-    dcr_prob = prob_from_dcr(dcr_rate_hz=25, fps=100000)
-    data = thin_frames_uniform(data, keep_prob=keep_prob, dcr_prob=dcr_prob, seed=42)
+            data = data_orig
 
-dataset = f"{data_path.stem}-thin{keep_prob:.3f}"
-model = SPADGAP.load_from_checkpoint(f"models/{dataset}/final_model.ckpt")
-indata = data[:10000].astype(np.float32)
-output = gpu_patch_inference(
-    model,
-    indata,
-    initial_patch_depth=48,
-    min_overlap=40,
-    device=1,
-)
-resdir = Path(f"results/{dataset}")
-resdir.mkdir(parents=True, exist_ok=True)
-compressor = zarr.codecs.BloscCodec(cname="zstd", clevel=5, shuffle="shuffle")
-zarr.create_array(
-    store=resdir / "inference.zarr",
-    data=output,
-    overwrite=True,
-    compressors=compressor,
-    chunks=(400, 512, 512),
-)
-gamma = output ** (1/2.2)
-to_video(gamma, resdir / "inference-gamma.mp4",  playback_fps=30, cmap="grey")
+        dataset = f"{data_path.stem}-thin{keep_prob:.3f}"
+        model = SPADGAP.load_from_checkpoint(f"models/{dataset}/final_model.ckpt")
+        indata = data[:10000].astype(np.float32)
+        output = gpu_patch_inference(
+            model,
+            indata,
+            initial_patch_depth=48,
+            min_overlap=40,
+            device=1,
+        )
+        resdir = Path(f"results/{dataset}")
+        resdir.mkdir(parents=True, exist_ok=True)
+        compressor = zarr.codecs.BloscCodec(cname="zstd", clevel=5, shuffle="shuffle")
+        zarr.create_array(
+            store=resdir / "inference.zarr",
+            data=output,
+            overwrite=True,
+            compressors=compressor,
+            chunks=(400, 512, 512),
+        )
+        to_video(output, resdir / "inference-gamma.mp4",  playback_fps=30, gamma=1/2.2, cmap="grey", vmin=0)
