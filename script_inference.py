@@ -225,9 +225,10 @@ def thin_frames_uniform(frames, keep_prob, dcr_prob=None, seed=None):
 configure_path = Path("./config.yml")
 config = load_config(path=configure_path)  # CLI argument
 
-datanames = ["balloon1"]
-slices_interest = [slice(36000, 76000)]
-keep_probs = [1/32]
+datanames = ["teaser-gunballoon-dark-acq00002"]
+slices_interest = [slice(83000, 89000)]
+inference_slices = []
+keep_probs = [1, 1/10]
 
 for i, dataname in enumerate(datanames):
     data_type = config["PATH"]["data_type"]
@@ -261,7 +262,8 @@ for i, dataname in enumerate(datanames):
     FRAME_LIMIT = 40000
     if slice_interest is not None:
         data_orig = data_orig[slice_interest]
-    data_orig = data_orig[:FRAME_LIMIT]
+    else:
+        data_orig = data_orig[:FRAME_LIMIT]
     for keep_prob in keep_probs:
         # keep_prob = config["PATH"]["thin"]
         if keep_prob < 1.0:
@@ -272,7 +274,7 @@ for i, dataname in enumerate(datanames):
 
         dataset = f"{data_path.stem}-thin{keep_prob:.3f}"
         model = SPADGAP.load_from_checkpoint(f"models/{dataset}/final_model.ckpt")
-        indata = data[:10000].astype(np.float32)
+        indata = data.astype(np.float32)
         output = gpu_patch_inference(
             model,
             indata,
@@ -289,5 +291,9 @@ for i, dataname in enumerate(datanames):
             overwrite=True,
             compressors=compressor,
             chunks=(400, 512, 512),
+            attrs={
+                "frame_start": slice_interest.start if slice_interest is not None else 0,
+                "frame_end": slice_interest.stop if slice_interest is not None else len(data),
+            }
         )
         to_video(output, resdir / "inference-gamma.mp4",  playback_fps=30, gamma=1/2.2, cmap="grey", vmin=0)

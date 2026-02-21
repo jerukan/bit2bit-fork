@@ -107,16 +107,12 @@ configure_path = Path("./config.yml")
 config = load_config(path=configure_path)  # CLI argument
 
 datanames = [
-    "Monkey", "cpufan_restarget", "plasma_ball_5_med",
-    "Resolution_target_drill", "ultrasound_bubble24", "balloon_gun3",
-    "balloon1"
+    "teaser-gunballoon-dark-acq00002"
 ]
 slices_interest = [
-    None, None, None,
-    None, None, None,
-    slice(36000, 76000)
+    slice(60000, 100000)
 ]
-keep_probs = [1.0, 1/32]
+keep_probs = [1.0, 1/10]
 
 # logging.basicConfig(
 #     # filename=config["PATH"]["logger"],
@@ -157,7 +153,8 @@ for i, dataname in enumerate(datanames):
     FRAME_LIMIT = 40000
     if slice_interest is not None:
         data_orig = data_orig[slice_interest]
-    data_orig = data_orig[:FRAME_LIMIT]
+    else:
+        data_orig = data_orig[:FRAME_LIMIT]
     for keep_prob in keep_probs:
         # keep_prob = config["PATH"]["thin"]
         if keep_prob < 1.0:
