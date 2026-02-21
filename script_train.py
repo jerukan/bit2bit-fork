@@ -106,9 +106,17 @@ def thin_frames_uniform(frames, keep_prob, dcr_prob=None, seed=None):
 configure_path = Path("./config.yml")
 config = load_config(path=configure_path)  # CLI argument
 
-datanames = ["balloon1"]
-slices_interest = [slice(36000, 76000)]
-keep_probs = [1/32]
+datanames = [
+    "Monkey", "cpufan_restarget", "plasma_ball_5_med",
+    "Resolution_target_drill", "ultrasound_bubble24", "balloon_gun3",
+    "balloon1"
+]
+slices_interest = [
+    None, None, None,
+    None, None, None,
+    slice(36000, 76000)
+]
+keep_probs = [1.0, 1/32]
 
 # logging.basicConfig(
 #     # filename=config["PATH"]["logger"],
@@ -147,8 +155,9 @@ for i, dataname in enumerate(datanames):
 
     slice_interest = slices_interest[i]
     FRAME_LIMIT = 40000
-    data_orig = data_orig[slice_interest]
-    # data_orig = data_orig[:FRAME_LIMIT]
+    if slice_interest is not None:
+        data_orig = data_orig[slice_interest]
+    data_orig = data_orig[:FRAME_LIMIT]
     for keep_prob in keep_probs:
         # keep_prob = config["PATH"]["thin"]
         if keep_prob < 1.0:
@@ -210,7 +219,7 @@ for i, dataname in enumerate(datanames):
                     save_top_k=2,
                 ),
                 LearningRateMonitor("epoch"),
-                EarlyStopping("val_loss", patience=25),
+                # EarlyStopping("val_loss", patience=25),
                 # DeviceStatsMonitor(),
             ],
             logger=logger,  # type: ignore

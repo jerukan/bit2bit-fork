@@ -256,10 +256,12 @@ for i, dataname in enumerate(datanames):
         del input
     elif data_type == "zarr":
         data_orig, _, _ = read_quanta_zarr(data_path)
-    FRAME_LIMIT = 40000
+
     slice_interest = slices_interest[i]
-    data_orig = data_orig[slice_interest]
-    # data_orig = data_orig[:FRAME_LIMIT]
+    FRAME_LIMIT = 40000
+    if slice_interest is not None:
+        data_orig = data_orig[slice_interest]
+    data_orig = data_orig[:FRAME_LIMIT]
     for keep_prob in keep_probs:
         # keep_prob = config["PATH"]["thin"]
         if keep_prob < 1.0:
