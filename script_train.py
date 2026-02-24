@@ -106,13 +106,14 @@ def thin_frames_uniform(frames, keep_prob, dcr_prob=None, seed=None):
 configure_path = Path("./config.yml")
 config = load_config(path=configure_path)  # CLI argument
 
+datainfo = {
+    "teaser-gunballoon-dark-acq00002": slice(60000, 100000),
+    "dark1": slice(10000, 50000)
+}
 datanames = [
-    "teaser-gunballoon-dark-acq00002"
+    "dark1"
 ]
-slices_interest = [
-    slice(60000, 100000)
-]
-keep_probs = [1.0, 1/10]
+keep_probs = [1]
 
 # logging.basicConfig(
 #     # filename=config["PATH"]["logger"],
@@ -149,10 +150,11 @@ for i, dataname in enumerate(datanames):
     elif data_type == "zarr":
         data_orig, _, _ = read_quanta_zarr(data_path)
 
-    slice_interest = slices_interest[i]
+    slice_interest = datainfo.get(dataname, None)
     FRAME_LIMIT = 40000
     if slice_interest is not None:
         data_orig = data_orig[slice_interest]
+        print(f"Using data slice {slice_interest}")
     else:
         data_orig = data_orig[:FRAME_LIMIT]
     for keep_prob in keep_probs:
@@ -205,7 +207,7 @@ for i, dataname in enumerate(datanames):
             accelerator="gpu",
             gradient_clip_val=1,
             precision=train_config.precision,  # type: ignore
-            devices=[1, 2, 3, 4, 5, 6, 7],
+            devices=[2, 3, 4, 5, 6, 7],
             strategy="ddp_find_unused_parameters_true",
             max_epochs=train_config.epochs,
             callbacks=[

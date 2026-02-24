@@ -225,8 +225,13 @@ def thin_frames_uniform(frames, keep_prob, dcr_prob=None, seed=None):
 configure_path = Path("./config.yml")
 config = load_config(path=configure_path)  # CLI argument
 
-datanames = ["teaser-gunballoon-dark-acq00002"]
-slices_interest = [slice(83000, 89000)]
+datainfo = {
+    "teaser-gunballoon-dark-acq00002": slice(83000, 89000),
+    "dark1": slice(36500, 41700)
+}
+datanames = [
+    "dark1"
+]
 inference_slices = []
 keep_probs = [1, 1/10]
 
@@ -258,10 +263,11 @@ for i, dataname in enumerate(datanames):
     elif data_type == "zarr":
         data_orig, _, _ = read_quanta_zarr(data_path)
 
-    slice_interest = slices_interest[i]
+    slice_interest = datainfo.get(dataname, None)
     FRAME_LIMIT = 40000
     if slice_interest is not None:
         data_orig = data_orig[slice_interest]
+        print(f"Using data slice {slice_interest}")
     else:
         data_orig = data_orig[:FRAME_LIMIT]
     for keep_prob in keep_probs:
@@ -291,7 +297,7 @@ for i, dataname in enumerate(datanames):
             overwrite=True,
             compressors=compressor,
             chunks=(400, 512, 512),
-            attrs={
+            attributes={
                 "frame_start": slice_interest.start if slice_interest is not None else 0,
                 "frame_end": slice_interest.stop if slice_interest is not None else len(data),
             }
