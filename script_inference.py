@@ -7,7 +7,7 @@
 #         orig()
 # torch._C._cuda_init = _wrapped_cuda_init
 
-
+import gc
 from spadio import SPADFolder, SPADData  # noqa
 from spadclean import GenerateTestData, SPADHotpixelTool  # noqa
 from pathlib import Path
@@ -235,9 +235,9 @@ datainfo = {
     "fanclock_dark": slice(1000, 3000),
 }
 datanames = [
-    "dark1"
+    "fanclock_dark", "bright1"
 ]
-keep_probs = [1]
+keep_probs = [1, 1/10]
 
 for i, dataname in enumerate(datanames):
     data_type = config["PATH"]["data_type"]
@@ -280,7 +280,7 @@ for i, dataname in enumerate(datanames):
             dcr_prob = prob_from_dcr(dcr_rate_hz=25, fps=100000)
             data = thin_frames_uniform(data_orig, keep_prob=keep_prob, dcr_prob=dcr_prob, seed=42)
         else:
-            data = data_orig
+            data = data_orig.copy()
 
         dataset = f"{data_path.stem}-thin{keep_prob:.3f}"
         model = SPADGAP.load_from_checkpoint(f"models/{dataset}/final_model.ckpt")
@@ -307,3 +307,12 @@ for i, dataname in enumerate(datanames):
             }
         )
         to_video(output, resdir / "inference-gamma.mp4",  playback_fps=30, gamma=1/2.2, cmap="grey", vmin=0)
+
+        del data
+        del model
+        del indata
+        del output
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
