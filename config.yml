@@ -65,7 +65,7 @@ TRAINING:
   shuffle: true
   drop_last: true
   pin_memory: true
-  num_workers: 24
+  num_workers: 4
   device_number: 1
   precision: "32"
   matmul_precision: "high"

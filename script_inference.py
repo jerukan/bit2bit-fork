@@ -227,13 +227,17 @@ config = load_config(path=configure_path)  # CLI argument
 
 datainfo = {
     "teaser-gunballoon-dark-acq00002": slice(83000, 89000),
-    "dark1": slice(36500, 41700)
+    "bright1": slice(11300, 15500),
+    "bright2": slice(2400, 6100),
+    "dark1": slice(36500, 41700),
+    "fanclock_bright": slice(1000, 3000),
+    "fanclock_bright_spadnd": slice(1000, 3000),
+    "fanclock_dark": slice(1000, 3000),
 }
 datanames = [
     "dark1"
 ]
-inference_slices = []
-keep_probs = [1, 1/10]
+keep_probs = [1]
 
 for i, dataname in enumerate(datanames):
     data_type = config["PATH"]["data_type"]

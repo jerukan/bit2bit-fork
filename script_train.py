@@ -7,7 +7,7 @@
 #         orig()
 # torch._C._cuda_init = _wrapped_cuda_init
 
-
+import gc
 from tqdm.auto import tqdm
 from spadio import SPADFolder, SPADData  # noqa
 from spadclean import GenerateTestData, SPADHotpixelTool  # noqa
@@ -24,6 +24,7 @@ from dataset import (
 )  # noqa
 from spadgapmodels import SPADGAP
 import torch
+import torch.distributed as dist
 import torch.utils.data as dt
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import (
@@ -108,12 +109,17 @@ config = load_config(path=configure_path)  # CLI argument
 
 datainfo = {
     "teaser-gunballoon-dark-acq00002": slice(60000, 100000),
-    "dark1": slice(10000, 50000)
+    "bright1": slice(0, 40000),
+    "bright2": slice(0, 40000),
+    "dark1": slice(10000, 50000),
+    "fanclock_bright": slice(0, 40000),
+    "fanclock_bright_spadnd": slice(0, 40000),
+    "fanclock_dark": slice(0, 40000),
 }
 datanames = [
-    "dark1"
+    "fanclock_dark", "bright1"
 ]
-keep_probs = [1]
+keep_probs = [1, 1/10]
 
 # logging.basicConfig(
 #     # filename=config["PATH"]["logger"],
@@ -163,7 +169,7 @@ for i, dataname in enumerate(datanames):
             dcr_prob = prob_from_dcr(dcr_rate_hz=25, fps=100000)
             data = thin_frames_uniform(data_orig, keep_prob=keep_prob, dcr_prob=dcr_prob, seed=42)
         else:
-            data = data_orig
+            data = data_orig.copy()
         idx_train = int(data.shape[0] * 0.8)
         traindata = data[:idx_train]
         valdata = data[idx_train:]
@@ -184,7 +190,7 @@ for i, dataname in enumerate(datanames):
             "pin_memory": train_config.pin_memory,
             "drop_last": train_config.drop_last,
             "num_workers": train_config.num_workers,
-            "persistent_workers": True,
+            "persistent_workers": False,  # need this false if looping through multiple model training
         }
 
         train_loader = dt.DataLoader(train_data, **loader_config)
@@ -236,5 +242,18 @@ for i, dataname in enumerate(datanames):
         trainer.fit(model, train_loader, val_loader)
         trainer.save_checkpoint(default_root_dir / "final_model.ckpt")
 
+        del train_loader, val_loader
+        del train_data, val_data
+        del traindata, valdata
+        del data
+        del logger
         del trainer
         del model
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+
+        if dist.is_available() and dist.is_initialized():
+            dist.destroy_process_group()
