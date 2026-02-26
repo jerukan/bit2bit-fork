@@ -115,11 +115,16 @@ datainfo = {
     "fanclock_bright": slice(0, 40000),
     "fanclock_bright_spadnd": slice(0, 40000),
     "fanclock_dark": slice(0, 40000),
+    "teaser_balloonbounce_dark": slice(10000, 50000),
+    "teaser_balloonbounce_bright": slice(20000, 60000),
+    "teaser-blender-dark": slice(50000, 80000),
+    "teaser-blender-bright1": slice(3000, 43000),
 }
 datanames = [
-    "fanclock_dark", "bright1"
+    "teaser_balloonbounce_dark", "teaser_balloonbounce_bright",
+    "teaser-blender-dark", "teaser-blender-bright1"
 ]
-keep_probs = [1, 1/10]
+keep_probs = [1.0]
 
 # logging.basicConfig(
 #     # filename=config["PATH"]["logger"],

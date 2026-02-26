@@ -233,11 +233,17 @@ datainfo = {
     "fanclock_bright": slice(1000, 3000),
     "fanclock_bright_spadnd": slice(1000, 3000),
     "fanclock_dark": slice(1000, 3000),
+    "teaser_balloonbounce_dark": slice(24300, 37900),
+    "teaser_balloonbounce_bright": slice(33600, 46500),
+    "teaser-blender-dark": slice(70000, 73000),
+    "teaser-blender-bright1": slice(39000, 42000),
+    # b2b data
+    "Monkey": slice(0, 5000)
 }
 datanames = [
-    "fanclock_dark", "bright1"
+    "Monkey"
 ]
-keep_probs = [1, 1/10]
+keep_probs = [1/10]
 
 for i, dataname in enumerate(datanames):
     data_type = config["PATH"]["data_type"]
@@ -268,12 +274,12 @@ for i, dataname in enumerate(datanames):
         data_orig, _, _ = read_quanta_zarr(data_path)
 
     slice_interest = datainfo.get(dataname, None)
-    FRAME_LIMIT = 40000
+    FRAME_LIMIT_INFERENCE = 10000
     if slice_interest is not None:
         data_orig = data_orig[slice_interest]
         print(f"Using data slice {slice_interest}")
     else:
-        data_orig = data_orig[:FRAME_LIMIT]
+        data_orig = data_orig[:FRAME_LIMIT_INFERENCE]
     for keep_prob in keep_probs:
         # keep_prob = config["PATH"]["thin"]
         if keep_prob < 1.0:
