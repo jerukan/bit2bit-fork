@@ -7,11 +7,18 @@
 #         orig()
 # torch._C._cuda_init = _wrapped_cuda_init
 
+import datetime
+import tempfile
+import os
 import gc
+import time
+from tqdm.auto import tqdm
 from spadio import SPADFolder, SPADData  # noqa
 from spadclean import GenerateTestData, SPADHotpixelTool  # noqa
 from pathlib import Path
 from utils import clean_hotpixels
+import matplotlib.pyplot as plt
+import cv2
 from inference import cpu_inference
 from metadata import TrainData, ModelConfig, TrainConfig, load_config
 from dataset import (
@@ -23,6 +30,7 @@ from dataset import (
 )  # noqa
 from spadgapmodels import SPADGAP
 import torch
+import torch.distributed as dist
 import torch.utils.data as dt
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import (
@@ -37,18 +45,9 @@ import numpy as np
 import logging
 import sys
 import shutil
-from tqdm.auto import tqdm
 import dask.array as da
-import zarr
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from itertools import product
-
 from inference import gpu_patch_inference
-
-from matplotlib import cm
-import matplotlib.pyplot as plt
-import cv2
-from tqdm.auto import tqdm
+import zarr
 
 def get_codec_for_format(format: str):
     """
@@ -65,8 +64,8 @@ def get_codec_for_format(format: str):
         raise ValueError(f"I haven't added the codec for: {format}")
 
 def to_video(
-    frames: np.ndarray, path, res_scale=1.0, playback_fps=None, gamma=1.0, cmap=None, format=None,
-    vmin=None, vmax=None, use_quantile=False
+    frames: np.ndarray, path, res_scale=1.0, playback_fps=None, gamma=1.0, cmap=None, fileformat=None,
+    vmin=None, vmax=None, quantile=None, framenames=None
 ):
     """
     Saves video frame arrays to a video file or sequence of PNGs. If path has no extension, 
@@ -77,9 +76,9 @@ def to_video(
         path (str or Path): output video file path or directory for image files.
         res_scale (float): resolution scaling factor with nearest neighbor interpolation.
         cmap: ignored if frames are RGB; otherwise, matplotlib colormap name or object.
-        format (str or None): video format (e.g., "mp4", "avi"), or image format (e.g., "png");
+        fileformat (str or None): video format (e.g., "mp4", "avi"), or image format (e.g., "png");
             if None, inferred from path suffix.
-        use_quantile (bool): if True, use quantiles to determine vmin and vmax for normalization
+        quantile (float or None): if not None, use quantiles to determine vmin and vmax for normalization
             (ignored if vmin or vmax are specified).
     """
     path = Path(path)
@@ -99,15 +98,18 @@ def to_video(
 
     # compute a normalized intensity in [0,1] for colormap input
     if vmax is None:
-        if use_quantile:
-            vmax = float(np.quantile(frames, 0.99))
+        if quantile is not None:
+            vmax = float(np.quantile(frames, quantile))
         else:
             vmax = float(np.max(frames))
     if vmin is None:
-        if use_quantile:
-            vmin = float(np.quantile(frames, 0.01))
+        if quantile is not None:
+            vmin = float(np.quantile(frames, 1 - quantile))
         else:
             vmin = float(np.min(frames))
+            if vmin >= 0:
+                print(f"vmin was not specified and frames have non-negative values, so using vmin=0 for more accurate scaling")
+                vmin = 0.0
 
     H, W = frames.shape[1], frames.shape[2]
     if res_scale != 1.0:
@@ -120,15 +122,15 @@ def to_video(
     is_video_file = path.suffix in [".mp4", ".avi", ".mov", ".mkv"]
     if not is_video_file:
         path.mkdir(parents=True, exist_ok=True)
-        if format is None:
-            format = "png"
+        if fileformat is None:
+            fileformat = "png"
     else:
         if playback_fps is None:
             raise ValueError("playback_fps must be specified if saving a video file")
         path.parent.mkdir(parents=True, exist_ok=True)
-        if format is None:
-            format = path.suffix[1:].lower()
-        codec = get_codec_for_format(format)
+        if fileformat is None:
+            fileformat = path.suffix[1:].lower()
+        codec = get_codec_for_format(fileformat)
         fourcc = cv2.VideoWriter_fourcc(*codec)
         vidwriter = cv2.VideoWriter(str(path), fourcc, playback_fps, (out_W, out_H), isColor=True)
 
@@ -152,7 +154,10 @@ def to_video(
         if is_video_file:
             vidwriter.write(bgr_mapped)
         else:
-            frame_path = path / f"frame_{i:05d}.{format}"
+            if framenames is None:
+                frame_path = path / f"frame_{i:05d}.{fileformat}"
+            else:
+                frame_path = path / f"{framenames[i]}.{fileformat}"
             cv2.imwrite(str(frame_path), bgr_mapped)
             allpaths.append(frame_path)
     if is_video_file:
@@ -223,30 +228,68 @@ def thin_frames_uniform(frames, keep_prob, dcr_prob=None, seed=None):
     frames = (frames.astype("uint8") & mask.astype("uint8")) | dcr_photons
     return frames.compute()
 
+
+def zip_run(results_dir: str, out_dir: str, run_id: str | None = None) -> Path:
+    """
+    Zip up a results folder.
+    """
+    results_dir = Path(results_dir).resolve()
+    out_dir = Path(out_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_id = run_id or results_dir.name
+    base_name = f"{run_id}-{ts}"
+    final_zip = out_dir / f"{base_name}.zip"
+    partial_zip = out_dir / f"{base_name}.zip.partial"
+
+    # create archive in a temp location first
+    with tempfile.TemporaryDirectory(dir=str(out_dir)) as td:
+        tmp_zip_base = Path(td) / base_name  # shutil.make_archive wants a base path w/o extension
+        tmp_zip_path = Path(shutil.make_archive(str(tmp_zip_base), "zip", root_dir=str(results_dir)))
+
+        # move into out_dir as .partial then atomically rename to .zip
+        shutil.move(str(tmp_zip_path), str(partial_zip))
+        os.replace(partial_zip, final_zip)
+
+    return final_zip
+
 configure_path = Path("./config.yml")
 config = load_config(path=configure_path)  # CLI argument
 
+# dataname: (slice for training, slice for inference)
 datainfo = {
     # our data
-    "teaser-gunballoon-dark-acq00002": slice(83000, 89000),
-    "bright1": slice(11300, 15500),
-    "bright2": slice(2400, 6100),
-    "dark1": slice(36500, 41700),
-    "fanclock_bright": slice(1000, 3000),
-    "fanclock_bright_spadnd": slice(1000, 3000),
-    "fanclock_dark": slice(1000, 3000),
-    "teaser_balloonbounce_dark": slice(24300, 37900),
-    "teaser_balloonbounce_bright": slice(33600, 46500),
-    "teaser-blender-dark": slice(70000, 73000),
-    "teaser-blender-bright1": slice(39000, 42000),
-    "balloon-laser-acq00000": slice(5000, 15000),
+    "teaser-gunballoon-dark-acq00002": (slice(60000, 100000), slice(83000, 89000)),
+    "bright1": (slice(0, 40000), slice(11300, 15500)),
+    "bright2": (slice(0, 40000), slice(2400, 6100)),
+    "dark1": (slice(10000, 50000), slice(36500, 41700)),
+    "fanclock_bright": (slice(0, 40000), slice(1000, 3000)),
+    "fanclock_bright_spadnd": (slice(0, 40000), slice(1000, 3000)),
+    "fanclock_dark": (slice(0, 40000), slice(1000, 3000)),
+    "teaser_balloonbounce_dark": (slice(10000, 50000), slice(24300, 37900)),
+    "teaser_balloonbounce_bright": (slice(20000, 60000), slice(33600, 46500)),
+    "teaser-blender-dark": (slice(50000, 90000), slice(70000, 73000)),
+    "teaser-blender-bright1": (slice(3000, 43000), slice(39000, 42000)),
+    "balloon-laser-acq00000": (slice(0, 40000), slice(5000, 15000)),
     # b2b data
-    "Monkey": slice(0, 5000)
+    "Monkey": (slice(0, 40000), slice(0, 5000)),
+    "Resolution_target_drill": (slice(0, 40000), slice(0, 5000)),
 }
 datanames = [
-    "teaser_balloonbounce_bright", "balloon-laser-acq00000"
+    "Resolution_target_drill"
 ]
-keep_probs = [1/10]
+keep_probs = [1]
+
+FRAME_LIMIT_TRAIN = 40000
+FRAME_LIMIT_INF = 10000
+
+# logging.basicConfig(
+#     # filename=config["PATH"]["logger"],
+#     level=logging.DEBUG,
+#     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+#     stream=sys.stdout,
+# )
 
 for i, dataname in enumerate(datanames):
     data_type = config["PATH"]["data_type"]
@@ -276,23 +319,117 @@ for i, dataname in enumerate(datanames):
     elif data_type == "zarr":
         data_orig, _, _ = read_quanta_zarr(data_path)
 
-    slice_interest = datainfo.get(dataname, None)
-    FRAME_LIMIT_INFERENCE = 10000
-    if slice_interest is not None:
-        data_orig = data_orig[slice_interest]
-        print(f"Using data slice {slice_interest}")
-    else:
-        data_orig = data_orig[:FRAME_LIMIT_INFERENCE]
+    slice_interest, slice_interest_inf = datainfo.get(dataname, (None, None))
+
     for keep_prob in keep_probs:
         # keep_prob = config["PATH"]["thin"]
+        print(f"Starting training for {dataname} with keep_prob={keep_prob}")
         if keep_prob < 1.0:
             dcr_prob = prob_from_dcr(dcr_rate_hz=25, fps=100000)
             data = thin_frames_uniform(data_orig, keep_prob=keep_prob, dcr_prob=dcr_prob, seed=42)
         else:
+            # copy just in case something funky happens
             data = data_orig.copy()
+        if slice_interest is not None:
+            data_trainval = data[slice_interest]
+            print(f"Using data slice {slice_interest}")
+            data_inf = data[slice_interest_inf]
+            print(f"Using inference data slice {slice_interest_inf}")
+        else:
+            data_trainval = data[:FRAME_LIMIT_TRAIN]
+            data_inf = data[:FRAME_LIMIT_INF]
+        idx_train = int(data_trainval.shape[0] * 0.8)
+        traindata = data_trainval[:idx_train]
+        valdata = data_trainval[idx_train:]
+        data_config = TrainData.from_config(config["DATA"], traindata.astype("float32"))
+        model_config = ModelConfig.from_config(config["MODEL"])
+        train_config = TrainConfig.from_config(config["TRAINING"], data_config, model_config)
+        val_data_config = TrainData.from_config_validation(
+            config["DATA"], (valdata.astype(np.float32))
+        )
+        print(train_config.metadata())
 
-        dataset = f"{data_path.stem}-thin{keep_prob:.3f}"
-        model = SPADGAP.load_from_checkpoint(f"models/{dataset}/final_model.ckpt")
+        train_data = BernoulliDataset3D.from_dataclass(data_config)
+        val_data = ValidationDataset3D.from_dataclass(val_data_config)
+
+        loader_config = {
+            "batch_size": train_config.batch_size,
+            "shuffle": train_config.shuffle,
+            "pin_memory": train_config.pin_memory,
+            "drop_last": train_config.drop_last,
+            "num_workers": train_config.num_workers,
+            "persistent_workers": False,  # need this false if looping through multiple model training
+        }
+
+        train_loader = dt.DataLoader(train_data, **loader_config)
+        loader_config["shuffle"] = False
+        val_loader = dt.DataLoader(val_data, **loader_config)
+
+        # test_name = train_config.name
+        test_name = f"{data_path.stem}-thin{keep_prob:.3f}"
+        default_root_dir = model_path / test_name
+        if not default_root_dir.exists():
+            default_root_dir.mkdir(parents=True)
+
+        model = SPADGAP.from_dataclass(model_config)
+        model.train()
+
+        logger = TensorBoardLogger(save_dir=model_path, name=test_name)
+
+        trainer = pl.Trainer(
+            default_root_dir=default_root_dir,
+            accelerator="gpu",
+            gradient_clip_val=1,
+            precision=train_config.precision,  # type: ignore
+            devices=[1, 2, 3, 4, 5, 6, 7],
+            strategy="ddp_find_unused_parameters_true",
+            max_epochs=train_config.epochs,
+            callbacks=[
+                ModelCheckpoint(
+                    save_weights_only=True,
+                    mode="min",
+                    monitor="val_loss",
+                    save_top_k=2,
+                ),
+                LearningRateMonitor("epoch"),
+                # EarlyStopping("val_loss", patience=25),
+                # DeviceStatsMonitor(),
+            ],
+            logger=logger,  # type: ignore
+            profiler="simple",
+            limit_val_batches=20,
+            enable_model_summary=True,
+            enable_checkpointing=True,
+        )
+        # print(f"input_size: {tuple(next(iter(train_loader))[0].shape)}")
+        print(f"file: {test_name}")
+        t0 = time.time()
+        model.train()
+        train_config.to_yaml(default_root_dir / "metadata.yml")
+        shutil.copyfile(configure_path, default_root_dir / "config.yml")
+        trainer.fit(model, train_loader, val_loader)
+        trainer.save_checkpoint(default_root_dir / "final_model.ckpt")
+        t1 = time.time()
+        print(f"Training time: {t1 - t0:.2f} seconds")
+
+        del train_loader, val_loader
+        del train_data, val_data
+        del traindata, valdata
+        del data
+        del logger
+        del trainer
+        del model
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+
+        if dist.is_available() and dist.is_initialized():
+            dist.destroy_process_group()
+
+        ######## Inference and saving results ########
+        model = SPADGAP.load_from_checkpoint(default_root_dir / "final_model.ckpt")
         indata = data.astype(np.float32)
         output = gpu_patch_inference(
             model,
@@ -301,7 +438,7 @@ for i, dataname in enumerate(datanames):
             min_overlap=40,
             device=1,
         )
-        resdir = Path(f"results/{dataset}")
+        resdir = Path(f"results") / test_name
         resdir.mkdir(parents=True, exist_ok=True)
         compressor = zarr.codecs.BloscCodec(cname="zstd", clevel=5, shuffle="shuffle")
         zarr.create_array(
@@ -325,3 +462,9 @@ for i, dataname in enumerate(datanames):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
+
+        zip_run(
+            resdir,
+            "/scratch/jeyan/photon-testing-grounds/output/zipresults",
+            run_id=f"b2b-{test_name}"
+        )
