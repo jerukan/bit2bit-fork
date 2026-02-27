@@ -226,6 +226,7 @@ configure_path = Path("./config.yml")
 config = load_config(path=configure_path)  # CLI argument
 
 datainfo = {
+    # our data
     "teaser-gunballoon-dark-acq00002": slice(83000, 89000),
     "bright1": slice(11300, 15500),
     "bright2": slice(2400, 6100),
@@ -237,11 +238,12 @@ datainfo = {
     "teaser_balloonbounce_bright": slice(33600, 46500),
     "teaser-blender-dark": slice(70000, 73000),
     "teaser-blender-bright1": slice(39000, 42000),
+    "balloon-laser-acq00000": slice(5000, 15000),
     # b2b data
     "Monkey": slice(0, 5000)
 }
 datanames = [
-    "Monkey"
+    "teaser_balloonbounce_bright", "balloon-laser-acq00000"
 ]
 keep_probs = [1/10]
 

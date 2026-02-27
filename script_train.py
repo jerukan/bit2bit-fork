@@ -8,6 +8,7 @@
 # torch._C._cuda_init = _wrapped_cuda_init
 
 import gc
+import time
 from tqdm.auto import tqdm
 from spadio import SPADFolder, SPADData  # noqa
 from spadclean import GenerateTestData, SPADHotpixelTool  # noqa
@@ -108,6 +109,7 @@ configure_path = Path("./config.yml")
 config = load_config(path=configure_path)  # CLI argument
 
 datainfo = {
+    # our data
     "teaser-gunballoon-dark-acq00002": slice(60000, 100000),
     "bright1": slice(0, 40000),
     "bright2": slice(0, 40000),
@@ -117,14 +119,17 @@ datainfo = {
     "fanclock_dark": slice(0, 40000),
     "teaser_balloonbounce_dark": slice(10000, 50000),
     "teaser_balloonbounce_bright": slice(20000, 60000),
-    "teaser-blender-dark": slice(50000, 80000),
+    "teaser-blender-dark": slice(50000, 90000),
     "teaser-blender-bright1": slice(3000, 43000),
+    "balloon-laser-acq00000": slice(0, 40000),
+    # b2b data
+    "Monkey": slice(0, 40000),
+    "Resolution_target_drill": slice(0, 40000),
 }
 datanames = [
-    "teaser_balloonbounce_dark", "teaser_balloonbounce_bright",
-    "teaser-blender-dark", "teaser-blender-bright1"
+    "Resolution_target_drill"
 ]
-keep_probs = [1.0]
+keep_probs = [1]
 
 # logging.basicConfig(
 #     # filename=config["PATH"]["logger"],
@@ -218,7 +223,7 @@ for i, dataname in enumerate(datanames):
             accelerator="gpu",
             gradient_clip_val=1,
             precision=train_config.precision,  # type: ignore
-            devices=[2, 3, 4, 5, 6, 7],
+            devices=[1, 2, 3, 4, 5, 6, 7],
             strategy="ddp_find_unused_parameters_true",
             max_epochs=train_config.epochs,
             callbacks=[
@@ -240,12 +245,14 @@ for i, dataname in enumerate(datanames):
         )
         # print(f"input_size: {tuple(next(iter(train_loader))[0].shape)}")
         print(f"file: {test_name}")
-
+        t0 = time.time()
         model.train()
         train_config.to_yaml(default_root_dir / "metadata.yml")
         shutil.copyfile(configure_path, default_root_dir / "config.yml")
         trainer.fit(model, train_loader, val_loader)
         trainer.save_checkpoint(default_root_dir / "final_model.ckpt")
+        t1 = time.time()
+        print(f"Training time: {t1 - t0:.2f} seconds")
 
         del train_loader, val_loader
         del train_data, val_data
