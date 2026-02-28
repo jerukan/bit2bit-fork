@@ -240,14 +240,17 @@ datainfo = {
     "teaser-blender-dark": slice(70000, 73000),
     "teaser-blender-bright1": slice(39000, 42000),
     "balloon-laser-acq00000": slice(5000, 15000),
+    "Feb27_balloonbounce_acq4_3100ppps": slice(23000, 33000),
     # b2b data
     "Monkey": slice(0, 5000)
 }
 datanames = [
     "teaser-blender-dark"
 ]
-keep_probs = [1]
-device = 0
+keep_probs = [
+    1/200
+]
+device = 1
 
 for i, dataname in enumerate(datanames):
     data_type = config["PATH"]["data_type"]

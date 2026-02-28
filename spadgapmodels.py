@@ -105,8 +105,8 @@ class SPADGAP(pl.LightningModule):
         self.up_convs = self._up_conv_list()
         self.conv_final = self._final_conv()
 
-        self._psnr_metric = pyiqa.create_metric("psnr", device=self.device)
-        self._ssim_metric = pyiqa.create_metric("ssim", channels=1, device=self.device)
+        # self._psnr_metric = pyiqa.create_metric("psnr", device=self.device)
+        # self._ssim_metric = pyiqa.create_metric("ssim", channels=1, device=self.device)
 
         self.save_hyperparameters()
         self._reset_params()
@@ -323,11 +323,30 @@ class SPADGAP(pl.LightningModule):
         ground_truth_mean = torch.mean(ground_truth) + EPSILON
         normalized_output = normalized_output / output_mean * ground_truth_mean
 
-        psnr = self._psnr_metric(normalized_output, ground_truth)
-        ssim = self._ssim_metric(normalized_output, ground_truth)
-        self.log("val_psnr", psnr)
-        self.log("val_ssim", ssim)
+        # psnr = self._psnr_metric(normalized_output, ground_truth)
+        # ssim = self._ssim_metric(normalized_output, ground_truth)
+        # self.log("val_psnr", psnr)
+        # self.log("val_ssim", ssim)
 
     @classmethod
     def from_dataclass(cls, metadata: ModelConfig):
         return cls(**metadata.metadata())
+
+    def on_after_backward(self):
+        # Only print occasionally / only on rank 0 to avoid spam
+        if self.global_rank != 0:
+            return
+        if self.global_step % 50 != 0:
+            return
+
+        unused = []
+        for name, p in self.named_parameters():
+            if p.requires_grad and p.grad is None:
+                unused.append(name)
+
+        if unused:
+            print(f"[step {self.global_step}] params with grad=None ({len(unused)}):")
+            for n in unused[:50]:
+                print("  ", n)
+            if len(unused) > 50:
+                print("  ...")

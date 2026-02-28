@@ -280,7 +280,7 @@ datainfo = {
 datanames = [
     "Feb27_balloonbounce_acq4_3100ppps"
 ]
-keep_probs = [1/20]
+keep_probs = [1/200]
 devices = [1, 2, 3, 4, 5, 6, 7]
 
 FRAME_LIMIT_TRAIN = 40000
@@ -384,7 +384,8 @@ for i, dataname in enumerate(datanames):
             gradient_clip_val=1,
             precision=train_config.precision,  # type: ignore
             devices=devices,
-            strategy="ddp_find_unused_parameters_true",
+            # strategy="ddp_find_unused_parameters_true",
+            strategy="auto",
             max_epochs=train_config.epochs,
             callbacks=[
                 ModelCheckpoint(
@@ -415,6 +416,8 @@ for i, dataname in enumerate(datanames):
         print(f"Training time: {t1 - t0:.2f} seconds")
 
         del train_loader, val_loader
+        del train_data, val_data
+        del data_config, model_config, train_config, val_data_config
         del logger
         del trainer
         del model
@@ -455,7 +458,6 @@ for i, dataname in enumerate(datanames):
 
         del data
         del data_inf
-        del train_data, val_data
         del traindata, valdata
         del model
         del indata

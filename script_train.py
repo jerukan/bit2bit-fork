@@ -122,14 +122,17 @@ datainfo = {
     "teaser-blender-dark": slice(50000, 90000),
     "teaser-blender-bright1": slice(3000, 43000),
     "balloon-laser-acq00000": slice(0, 40000),
+    "Feb27_balloonbounce_acq4_3100ppps": slice(0, 40000),
     # b2b data
     "Monkey": slice(0, 40000),
     "Resolution_target_drill": slice(0, 40000),
 }
 datanames = [
-    "Resolution_target_drill"
+    "Feb27_balloonbounce_acq4_3100ppps"
 ]
-keep_probs = [1]
+keep_probs = [
+    1/200
+]
 
 # logging.basicConfig(
 #     # filename=config["PATH"]["logger"],
@@ -224,7 +227,7 @@ for i, dataname in enumerate(datanames):
             gradient_clip_val=1,
             precision=train_config.precision,  # type: ignore
             devices=[1, 2, 3, 4, 5, 6, 7],
-            strategy="ddp_find_unused_parameters_true",
+            strategy="auto",
             max_epochs=train_config.epochs,
             callbacks=[
                 ModelCheckpoint(

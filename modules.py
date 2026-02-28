@@ -58,7 +58,8 @@ class UnetBlockConv3D(nn.Module):
         self.merge_conv = partial(merge_conv, z_conv=z_conv, mode=merge_mode)
         self.conv333 = partial(conv3x3x3, z_conv=z_conv)
         self.down_sample = partial(pool, down_mode=down_mode, z_conv=z_conv, last=last)
-        self.up_sample = upconv2x2x2(in_channels, out_channels, z_conv, up_mode=up_mode)
+        # self.up_sample = upconv2x2x2(in_channels, out_channels, z_conv, up_mode=up_mode)
+        self.up_sample = None  # to be defined in child classes since it depends on up_mode
         self.activation = activation_function(activation)
         self.__other__()
 
@@ -140,6 +141,7 @@ class UpConvTri3D(UnetBlockConv3D):
     """
 
     def __other__(self):
+        self.up_sample = upconv2x2x2(self.in_channels, self.out_channels, self.z_conv, up_mode=self.up_mode)
         self.resconv = self.merge_conv(self.out_channels, self.out_channels)
         self.conv2 = self.conv333(self.out_channels, self.out_channels)
         self.conv3 = self.conv333(self.out_channels, self.out_channels)
