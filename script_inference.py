@@ -244,9 +244,10 @@ datainfo = {
     "Monkey": slice(0, 5000)
 }
 datanames = [
-    "teaser_balloonbounce_bright", "balloon-laser-acq00000"
+    "teaser-blender-dark"
 ]
-keep_probs = [1/10]
+keep_probs = [1]
+device = 0
 
 for i, dataname in enumerate(datanames):
     data_type = config["PATH"]["data_type"]
@@ -299,7 +300,7 @@ for i, dataname in enumerate(datanames):
             indata,
             initial_patch_depth=48,
             min_overlap=40,
-            device=1,
+            device=device,
         )
         resdir = Path(f"results/{dataset}")
         resdir.mkdir(parents=True, exist_ok=True)

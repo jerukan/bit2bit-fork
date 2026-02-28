@@ -272,14 +272,16 @@ datainfo = {
     "teaser-blender-dark": (slice(50000, 90000), slice(70000, 73000)),
     "teaser-blender-bright1": (slice(3000, 43000), slice(39000, 42000)),
     "balloon-laser-acq00000": (slice(0, 40000), slice(5000, 15000)),
+    "Feb27_balloonbounce_acq4_3100ppps": (slice(0, 40000), slice(23000, 33000)),
     # b2b data
     "Monkey": (slice(0, 40000), slice(0, 5000)),
     "Resolution_target_drill": (slice(0, 40000), slice(0, 5000)),
 }
 datanames = [
-    "Resolution_target_drill"
+    "Feb27_balloonbounce_acq4_3100ppps"
 ]
-keep_probs = [1]
+keep_probs = [1/20]
+devices = [1, 2, 3, 4, 5, 6, 7]
 
 FRAME_LIMIT_TRAIN = 40000
 FRAME_LIMIT_INF = 10000
@@ -381,7 +383,7 @@ for i, dataname in enumerate(datanames):
             accelerator="gpu",
             gradient_clip_val=1,
             precision=train_config.precision,  # type: ignore
-            devices=[1, 2, 3, 4, 5, 6, 7],
+            devices=devices,
             strategy="ddp_find_unused_parameters_true",
             max_epochs=train_config.epochs,
             callbacks=[
@@ -413,9 +415,6 @@ for i, dataname in enumerate(datanames):
         print(f"Training time: {t1 - t0:.2f} seconds")
 
         del train_loader, val_loader
-        del train_data, val_data
-        del traindata, valdata
-        del data
         del logger
         del trainer
         del model
@@ -430,7 +429,7 @@ for i, dataname in enumerate(datanames):
 
         ######## Inference and saving results ########
         model = SPADGAP.load_from_checkpoint(default_root_dir / "final_model.ckpt")
-        indata = data.astype(np.float32)
+        indata = data_inf.astype(np.float32)
         output = gpu_patch_inference(
             model,
             indata,
@@ -449,12 +448,15 @@ for i, dataname in enumerate(datanames):
             chunks=(400, 512, 512),
             attributes={
                 "frame_start": slice_interest.start if slice_interest is not None else 0,
-                "frame_end": slice_interest.stop if slice_interest is not None else len(data),
+                "frame_end": slice_interest.stop if slice_interest is not None else len(data_inf),
             }
         )
         to_video(output, resdir / "inference-gamma.mp4",  playback_fps=30, gamma=1/2.2, cmap="grey", vmin=0)
 
         del data
+        del data_inf
+        del train_data, val_data
+        del traindata, valdata
         del model
         del indata
         del output
