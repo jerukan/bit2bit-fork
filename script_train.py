@@ -123,16 +123,22 @@ datainfo = {
     "teaser-blender-bright1": slice(3000, 43000),
     "balloon-laser-acq00000": slice(0, 40000),
     "Feb27_balloonbounce_acq4_3100ppps": slice(0, 40000),
+    "Feb28_balloonBounce_acq0_2221ppps": slice(0, 40000),
+    "Feb27_blender_acq15_4351ppps": slice(40000, 80000),
     # b2b data
     "Monkey": slice(0, 40000),
     "Resolution_target_drill": slice(0, 40000),
 }
+# not combinatoric
 datanames = [
-    "Feb27_balloonbounce_acq4_3100ppps"
+    "Feb28_balloonBounce_acq0_2221ppps",
+    "Feb27_blender_acq15_4351ppps",
+    "Feb27_blender_acq15_4351ppps"
 ]
 keep_probs = [
-    1/200
+    1/100, 1, 1/10
 ]
+devices = [2, 3, 4, 5, 6, 7]
 
 # logging.basicConfig(
 #     # filename=config["PATH"]["logger"],
@@ -176,99 +182,100 @@ for i, dataname in enumerate(datanames):
         print(f"Using data slice {slice_interest}")
     else:
         data_orig = data_orig[:FRAME_LIMIT]
-    for keep_prob in keep_probs:
-        # keep_prob = config["PATH"]["thin"]
-        if keep_prob < 1.0:
-            dcr_prob = prob_from_dcr(dcr_rate_hz=25, fps=100000)
-            data = thin_frames_uniform(data_orig, keep_prob=keep_prob, dcr_prob=dcr_prob, seed=42)
-        else:
-            data = data_orig.copy()
-        idx_train = int(data.shape[0] * 0.8)
-        traindata = data[:idx_train]
-        valdata = data[idx_train:]
-        data_config = TrainData.from_config(config["DATA"], traindata.astype("float32"))
-        model_config = ModelConfig.from_config(config["MODEL"])
-        train_config = TrainConfig.from_config(config["TRAINING"], data_config, model_config)
-        val_data_config = TrainData.from_config_validation(
-            config["DATA"], (valdata.astype(np.float32))
-        )
-        print(train_config.metadata())
+    
+    keep_prob = keep_probs[i]
+    # keep_prob = config["PATH"]["thin"]
+    if keep_prob < 1.0:
+        dcr_prob = prob_from_dcr(dcr_rate_hz=25, fps=100000)
+        data = thin_frames_uniform(data_orig, keep_prob=keep_prob, dcr_prob=dcr_prob, seed=42)
+    else:
+        data = data_orig.copy()
+    idx_train = int(data.shape[0] * 0.8)
+    traindata = data[:idx_train]
+    valdata = data[idx_train:]
+    data_config = TrainData.from_config(config["DATA"], traindata.astype("float32"))
+    model_config = ModelConfig.from_config(config["MODEL"])
+    train_config = TrainConfig.from_config(config["TRAINING"], data_config, model_config)
+    val_data_config = TrainData.from_config_validation(
+        config["DATA"], (valdata.astype(np.float32))
+    )
+    print(train_config.metadata())
 
-        train_data = BernoulliDataset3D.from_dataclass(data_config)
-        val_data = ValidationDataset3D.from_dataclass(val_data_config)
+    train_data = BernoulliDataset3D.from_dataclass(data_config)
+    val_data = ValidationDataset3D.from_dataclass(val_data_config)
 
-        loader_config = {
-            "batch_size": train_config.batch_size,
-            "shuffle": train_config.shuffle,
-            "pin_memory": train_config.pin_memory,
-            "drop_last": train_config.drop_last,
-            "num_workers": train_config.num_workers,
-            "persistent_workers": False,  # need this false if looping through multiple model training
-        }
+    loader_config = {
+        "batch_size": train_config.batch_size,
+        "shuffle": train_config.shuffle,
+        "pin_memory": train_config.pin_memory,
+        "drop_last": train_config.drop_last,
+        "num_workers": train_config.num_workers,
+        "persistent_workers": False,  # need this false if looping through multiple model training
+    }
 
-        train_loader = dt.DataLoader(train_data, **loader_config)
-        loader_config["shuffle"] = False
-        val_loader = dt.DataLoader(val_data, **loader_config)
+    train_loader = dt.DataLoader(train_data, **loader_config)
+    loader_config["shuffle"] = False
+    val_loader = dt.DataLoader(val_data, **loader_config)
 
-        # test_name = train_config.name
-        test_name = f"{data_path.stem}-thin{keep_prob:.3f}"
-        default_root_dir = model_path / test_name
-        if not default_root_dir.exists():
-            default_root_dir.mkdir(parents=True)
+    # test_name = train_config.name
+    test_name = f"{data_path.stem}-thin{keep_prob:.3f}"
+    default_root_dir = model_path / test_name
+    if not default_root_dir.exists():
+        default_root_dir.mkdir(parents=True)
 
-        model = SPADGAP.from_dataclass(model_config)
-        model.train()
+    model = SPADGAP.from_dataclass(model_config)
+    model.train()
 
-        logger = TensorBoardLogger(save_dir=model_path, name=test_name)
+    logger = TensorBoardLogger(save_dir=model_path, name=test_name)
 
-        trainer = pl.Trainer(
-            default_root_dir=default_root_dir,
-            accelerator="gpu",
-            gradient_clip_val=1,
-            precision=train_config.precision,  # type: ignore
-            devices=[1, 2, 3, 4, 5, 6, 7],
-            strategy="auto",
-            max_epochs=train_config.epochs,
-            callbacks=[
-                ModelCheckpoint(
-                    save_weights_only=True,
-                    mode="min",
-                    monitor="val_loss",
-                    save_top_k=2,
-                ),
-                LearningRateMonitor("epoch"),
-                # EarlyStopping("val_loss", patience=25),
-                # DeviceStatsMonitor(),
-            ],
-            logger=logger,  # type: ignore
-            profiler="simple",
-            limit_val_batches=20,
-            enable_model_summary=True,
-            enable_checkpointing=True,
-        )
-        # print(f"input_size: {tuple(next(iter(train_loader))[0].shape)}")
-        print(f"file: {test_name}")
-        t0 = time.time()
-        model.train()
-        train_config.to_yaml(default_root_dir / "metadata.yml")
-        shutil.copyfile(configure_path, default_root_dir / "config.yml")
-        trainer.fit(model, train_loader, val_loader)
-        trainer.save_checkpoint(default_root_dir / "final_model.ckpt")
-        t1 = time.time()
-        print(f"Training time: {t1 - t0:.2f} seconds")
+    trainer = pl.Trainer(
+        default_root_dir=default_root_dir,
+        accelerator="gpu",
+        gradient_clip_val=1,
+        precision=train_config.precision,  # type: ignore
+        devices=devices,
+        strategy="auto",
+        max_epochs=train_config.epochs,
+        callbacks=[
+            ModelCheckpoint(
+                save_weights_only=True,
+                mode="min",
+                monitor="val_loss",
+                save_top_k=2,
+            ),
+            LearningRateMonitor("epoch"),
+            # EarlyStopping("val_loss", patience=25),
+            # DeviceStatsMonitor(),
+        ],
+        logger=logger,  # type: ignore
+        profiler="simple",
+        limit_val_batches=20,
+        enable_model_summary=True,
+        enable_checkpointing=True,
+    )
+    # print(f"input_size: {tuple(next(iter(train_loader))[0].shape)}")
+    print(f"file: {test_name}")
+    t0 = time.time()
+    model.train()
+    train_config.to_yaml(default_root_dir / "metadata.yml")
+    shutil.copyfile(configure_path, default_root_dir / "config.yml")
+    trainer.fit(model, train_loader, val_loader)
+    trainer.save_checkpoint(default_root_dir / "final_model.ckpt")
+    t1 = time.time()
+    print(f"Training time: {t1 - t0:.2f} seconds")
 
-        del train_loader, val_loader
-        del train_data, val_data
-        del traindata, valdata
-        del data
-        del logger
-        del trainer
-        del model
+    del train_loader, val_loader
+    del train_data, val_data
+    del traindata, valdata
+    del data
+    del logger
+    del trainer
+    del model
 
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
 
-        if dist.is_available() and dist.is_initialized():
-            dist.destroy_process_group()
+    if dist.is_available() and dist.is_initialized():
+        dist.destroy_process_group()

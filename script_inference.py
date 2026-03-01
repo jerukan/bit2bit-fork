@@ -241,11 +241,13 @@ datainfo = {
     "teaser-blender-bright1": slice(39000, 42000),
     "balloon-laser-acq00000": slice(5000, 15000),
     "Feb27_balloonbounce_acq4_3100ppps": slice(23000, 33000),
+    "Feb28_balloonBounce_acq0_2221ppps": slice(19600, 29500),
+    "Feb27_blender_acq15_4351ppps": slice(65000, 75000),
     # b2b data
     "Monkey": slice(0, 5000)
 }
 datanames = [
-    "teaser-blender-dark"
+    "Feb27_balloonbounce_acq4_3100ppps"
 ]
 keep_probs = [
     1/200
