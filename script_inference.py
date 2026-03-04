@@ -243,14 +243,16 @@ datainfo = {
     "Feb27_balloonbounce_acq4_3100ppps": slice(23000, 33000),
     "Feb28_balloonBounce_acq0_2221ppps": slice(19600, 29500),
     "Feb27_blender_acq15_4351ppps": slice(65000, 75000),
+    "Feb29_balloonbounce_acq0_2875ppps": slice(18500, 28100),
     # b2b data
-    "Monkey": slice(0, 5000)
+    "Monkey": slice(0, 10000)
 }
+# not combinatoric
 datanames = [
-    "Feb27_balloonbounce_acq4_3100ppps"
+    "Feb27_blender_acq15_4351ppps", "Feb28_balloonBounce_acq0_2221ppps"
 ]
 keep_probs = [
-    1/200
+    1.0, 1.0
 ]
 device = 1
 
@@ -289,45 +291,45 @@ for i, dataname in enumerate(datanames):
         print(f"Using data slice {slice_interest}")
     else:
         data_orig = data_orig[:FRAME_LIMIT_INFERENCE]
-    for keep_prob in keep_probs:
-        # keep_prob = config["PATH"]["thin"]
-        if keep_prob < 1.0:
-            dcr_prob = prob_from_dcr(dcr_rate_hz=25, fps=100000)
-            data = thin_frames_uniform(data_orig, keep_prob=keep_prob, dcr_prob=dcr_prob, seed=42)
-        else:
-            data = data_orig.copy()
+    keep_prob = keep_probs[i]
+    # keep_prob = config["PATH"]["thin"]
+    if keep_prob < 1.0:
+        dcr_prob = prob_from_dcr(dcr_rate_hz=25, fps=100000)
+        data = thin_frames_uniform(data_orig, keep_prob=keep_prob, dcr_prob=dcr_prob, seed=42)
+    else:
+        data = data_orig.copy()
 
-        dataset = f"{data_path.stem}-thin{keep_prob:.3f}"
-        model = SPADGAP.load_from_checkpoint(f"models/{dataset}/final_model.ckpt")
-        indata = data.astype(np.float32)
-        output = gpu_patch_inference(
-            model,
-            indata,
-            initial_patch_depth=48,
-            min_overlap=40,
-            device=device,
-        )
-        resdir = Path(f"results/{dataset}")
-        resdir.mkdir(parents=True, exist_ok=True)
-        compressor = zarr.codecs.BloscCodec(cname="zstd", clevel=5, shuffle="shuffle")
-        zarr.create_array(
-            store=resdir / "inference.zarr",
-            data=output,
-            overwrite=True,
-            compressors=compressor,
-            chunks=(400, 512, 512),
-            attributes={
-                "frame_start": slice_interest.start if slice_interest is not None else 0,
-                "frame_end": slice_interest.stop if slice_interest is not None else len(data),
-            }
-        )
-        to_video(output, resdir / "inference-gamma.mp4",  playback_fps=30, gamma=1/2.2, cmap="grey", vmin=0)
+    dataset = f"{data_path.stem}-thin{keep_prob:.3f}"
+    model = SPADGAP.load_from_checkpoint(f"models/{dataset}/final_model.ckpt")
+    indata = data.astype(np.float32)
+    output = gpu_patch_inference(
+        model,
+        indata,
+        initial_patch_depth=48,
+        min_overlap=40,
+        device=device,
+    )
+    resdir = Path(f"results/{dataset}")
+    resdir.mkdir(parents=True, exist_ok=True)
+    compressor = zarr.codecs.BloscCodec(cname="zstd", clevel=5, shuffle="shuffle")
+    zarr.create_array(
+        store=resdir / "inference.zarr",
+        data=output,
+        overwrite=True,
+        compressors=compressor,
+        chunks=(400, 512, 512),
+        attributes={
+            "frame_start": slice_interest.start if slice_interest is not None else 0,
+            "frame_end": slice_interest.stop if slice_interest is not None else len(data),
+        }
+    )
+    to_video(output, resdir / "inference-gamma.mp4",  playback_fps=30, gamma=1/2.2, cmap="grey", vmin=0)
 
-        del data
-        del model
-        del indata
-        del output
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
+    del data
+    del model
+    del indata
+    del output
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()

@@ -125,20 +125,19 @@ datainfo = {
     "Feb27_balloonbounce_acq4_3100ppps": slice(0, 40000),
     "Feb28_balloonBounce_acq0_2221ppps": slice(0, 40000),
     "Feb27_blender_acq15_4351ppps": slice(40000, 80000),
+    "Feb29_balloonbounce_acq0_2875ppps": slice(0, 40000),
     # b2b data
     "Monkey": slice(0, 40000),
     "Resolution_target_drill": slice(0, 40000),
 }
 # not combinatoric
 datanames = [
-    "Feb28_balloonBounce_acq0_2221ppps",
-    "Feb27_blender_acq15_4351ppps",
-    "Feb27_blender_acq15_4351ppps"
+    "Feb29_balloonbounce_acq0_2875ppps", "Feb29_balloonbounce_acq0_2875ppps"
 ]
 keep_probs = [
-    1/100, 1, 1/10
+    1/150, 1/200
 ]
-devices = [2, 3, 4, 5, 6, 7]
+devices = [1, 2, 3, 4, 5, 6, 7]
 
 # logging.basicConfig(
 #     # filename=config["PATH"]["logger"],
